@@ -183,7 +183,7 @@ public:
 		if (fo) {
 			while (received < fs) {
 				char tmp[8*1024];
-				auto rr = sslread(tmp, std::min(sizeof(tmp), fs - received));
+				auto rr = sslread(tmp, std::min((uint64_t)sizeof(tmp), fs - received));
 				if (rr <= 0)
 					break;
 				if (rr != fwrite(tmp, 1, rr, fo))
