@@ -280,10 +280,10 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	catch (args::ValidationError e) {
-        std::cerr << e.what() << std::endl;
-        std::cerr << parser;
-        return 1;
-    }
+		std::cerr << e.what() << std::endl;
+		std::cerr << parser;
+		return 1;
+	}
 
 	int max_connections = flagmaxc ? args::get(flagmaxc) : 10;   // Some sane default
 	int port = flagport ? args::get(flagport) : 8080;            // Some default port
@@ -347,11 +347,11 @@ int main(int argc, char **argv) {
 			else
 				elem->join();
 		handlers = std::move(newlist);
-    }
+	}
 
 	// Cleanup!
-    close(listendf);
-    SSL_CTX_free(ctx);
-    EVP_cleanup();
+	close(listendf);
+	SSL_CTX_free(ctx);
+	EVP_cleanup();
 }
 
