@@ -259,12 +259,12 @@ int main(int argc, char **argv) {
 	args::HelpFlag help(parser, "help", "Display this help menu", {'h', "help"});
 	args::ValueFlag<int> flagport(parser, "port", "Server listen port", {'p'});
 	args::ValueFlag<int> flagmaxc(parser, "count", "Maximum simultaneous connections", {'n'});
+	args::ValueFlag<std::string> daemonuser(parser, "user", "User to drop privileges to when running as root", {'u'});
 	args::Group reqarguments(parser, "required arguments", args::Group::Validators::All, args::Options::Required);
 	args::ValueFlag<std::string> dirflag(reqarguments, "path", "Directory where to dump backups", {'d'});
 	args::ValueFlag<std::string> passflag(reqarguments, "pass", "Password to authenticate the clients with", {'x'});
 	args::ValueFlag<std::string> certflag(reqarguments, "cert", "Certificate chain file", {'c'});
 	args::ValueFlag<std::string> keyflag(reqarguments, "key", "Key file to use for the SSL server", {'k'});
-	args::ValueFlag<std::string> daemonuser(reqarguments, "user", "User to drop privileges to when running as root", {'u'});
 	try {
 		parser.ParseCLI(argc, argv);
 	}
