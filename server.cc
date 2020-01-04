@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pwd.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -263,6 +264,7 @@ int main(int argc, char **argv) {
 	args::ValueFlag<std::string> passflag(reqarguments, "pass", "Password to authenticate the clients with", {'x'});
 	args::ValueFlag<std::string> certflag(reqarguments, "cert", "Certificate chain file", {'c'});
 	args::ValueFlag<std::string> keyflag(reqarguments, "key", "Key file to use for the SSL server", {'k'});
+	args::ValueFlag<std::string> daemonuser(reqarguments, "user", "User to drop privileges to when running as root", {'u'});
 	try {
 		parser.ParseCLI(argc, argv);
 	}
@@ -302,7 +304,7 @@ int main(int argc, char **argv) {
 
 		perror("Unable to create SSL context");
 		ERR_print_errors_fp(stderr);
-		exit(1);
+		return 1;
 	}
 
 	// Set the key and cert (note we use _chain_ to ensure clients are happy)
@@ -311,11 +313,27 @@ int main(int argc, char **argv) {
 	    SSL_CTX_use_PrivateKey_file(ctx, args::get(keyflag).c_str(), SSL_FILETYPE_PEM) <= 0 ||
 	    !SSL_CTX_check_private_key(ctx)) {
 		ERR_print_errors_fp(stdout);
-		exit(1);
+		return 1;
 	}
 
 	std::list<std::unique_ptr<BackupHandler>> handlers;
 	int listendf = create_socket(port);
+
+	// Drop privileges here if needed
+	std::string puser = args::get(daemonuser);
+	if (!puser.empty()) {
+		std::cout << "Dropping privileges to user " << puser << std::endl;
+		struct passwd * pw = getpwnam(puser.c_str());
+		if (!pw) {
+			std::cerr << "Could not find user in passwd file: " << puser << std::endl;
+			return 1;
+		}
+
+		if (setgid(pw->pw_gid) || setuid(pw->pw_uid)) {
+			std::cerr << "setuid/setgid failed!" << std::endl;
+			return 1;
+		}
+	}
 
 	// Handles incoming connections.
 	while (1) {
