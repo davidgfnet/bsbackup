@@ -341,7 +341,10 @@ int main(int argc, char **argv) {
 		socklen_t len = sizeof(addr);
 		int clientfd = accept(listendf, (struct sockaddr*)&addr, &len);
 		if (clientfd >= 0) {
-			std::cout << "Got connection" << std::endl;
+			char ipstr[INET_ADDRSTRLEN] = {0};
+			inet_ntop(AF_INET, &addr, ipstr, INET_ADDRSTRLEN);
+
+			std::cout << "Got connection from " << ipstr << std::endl;
 			// Set read/write timeout to something useful
 			struct timeval to = { .tv_sec = 60, .tv_usec = 0 };
 			setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, (char*)&to, sizeof(to));
