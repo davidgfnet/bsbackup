@@ -92,12 +92,14 @@ void backup_cleanup(std::string dir, unsigned max_copies) {
 
 class BackupHandler {
 public:
-	BackupHandler(int clientfd, SSL *ssl)
-		: clientfd(clientfd), ssl(ssl), th(&BackupHandler::run, this), thread_dead(false) {}
+	BackupHandler(int clientfd, SSL *ssl, SSL_CTX *ctx)
+		: clientfd(clientfd), ssl(ssl), ctx(ctx),
+		  th(&BackupHandler::run, this), thread_dead(false) {}
 	BackupHandler(const BackupHandler &h) = delete;
 
 	~BackupHandler() {
 		SSL_free(ssl);
+		SSL_CTX_free(ctx);
 	}
 
 	bool eot() const { return thread_dead; }
@@ -227,6 +229,7 @@ private:
 
 	int clientfd;
 	SSL *ssl;
+	SSL_CTX *ctx;
 	std::thread th;
 	bool thread_dead;
 };
@@ -252,6 +255,38 @@ int create_socket(int port) {
 	}
 	return s;
 }
+
+class SSLFactory {
+private:
+	std::string keyfile, certfile;
+
+public:
+	SSLFactory(std::string keyfile, std::string certfile)
+		:keyfile(keyfile), certfile(certfile) {}
+
+	SSL_CTX *create() {
+		auto *ctx = SSL_CTX_new(TLS_method());
+		if (!ctx ||
+			!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
+			!SSL_CTX_set_max_proto_version(ctx, 0)) {
+
+			perror("Unable to create SSL context");
+			ERR_print_errors_fp(stderr);
+			return nullptr;
+		}
+
+		// Set the key and cert (note we use _chain_ to ensure clients are happy)
+		SSL_CTX_set_ecdh_auto(ctx, 1);
+		if (SSL_CTX_use_certificate_chain_file(ctx, certfile.c_str()) <= 0 ||
+			SSL_CTX_use_PrivateKey_file(ctx, keyfile.c_str(), SSL_FILETYPE_PEM) <= 0 ||
+			!SSL_CTX_check_private_key(ctx)) {
+			ERR_print_errors_fp(stdout);
+			return nullptr;
+		}
+
+		return ctx;
+	}
+};
 
 int main(int argc, char **argv) {
 	args::ArgumentParser parser("bsserver receives backup requests from clients and archives them.",
@@ -297,24 +332,8 @@ int main(int argc, char **argv) {
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
-	auto *ctx = SSL_CTX_new(TLS_method());
-	if (!ctx ||
-		!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
-		!SSL_CTX_set_max_proto_version(ctx, 0)) {
 
-		perror("Unable to create SSL context");
-		ERR_print_errors_fp(stderr);
-		return 1;
-	}
-
-	// Set the key and cert (note we use _chain_ to ensure clients are happy)
-	SSL_CTX_set_ecdh_auto(ctx, 1);
-	if (SSL_CTX_use_certificate_chain_file(ctx, args::get(certflag).c_str()) <= 0 ||
-	    SSL_CTX_use_PrivateKey_file(ctx, args::get(keyflag).c_str(), SSL_FILETYPE_PEM) <= 0 ||
-	    !SSL_CTX_check_private_key(ctx)) {
-		ERR_print_errors_fp(stdout);
-		return 1;
-	}
+	SSLFactory factory(args::get(keyflag), args::get(certflag));
 
 	std::list<std::unique_ptr<BackupHandler>> handlers;
 	int listendf = create_socket(port);
@@ -352,12 +371,17 @@ int main(int argc, char **argv) {
 
 			// Spawn a handler for this backup activity
 			if (handlers.size() < max_connections) {
-				SSL *ssl = SSL_new(ctx);
-				SSL_set_fd(ssl, clientfd);
-				handlers.emplace_back(new BackupHandler(clientfd, ssl));
-			} else {
-				close(clientfd);
+				SSL_CTX *ctx = factory.create();
+				if (ctx) {
+					SSL *ssl = SSL_new(ctx);
+					SSL_set_fd(ssl, clientfd);
+					handlers.emplace_back(new BackupHandler(clientfd, ssl, ctx));
+				}
+				else
+					close(clientfd);
 			}
+			else
+				close(clientfd);
 		}
 
 		// Take the chance to cleanup a bit dead threads.
@@ -372,7 +396,6 @@ int main(int argc, char **argv) {
 
 	// Cleanup!
 	close(listendf);
-	SSL_CTX_free(ctx);
 	EVP_cleanup();
 }
 
