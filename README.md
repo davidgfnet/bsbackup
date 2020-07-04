@@ -31,14 +31,30 @@ Practical stuff
 ---------------
 
 In oder to setup a server just build it, a simple "make" is enough.
-Dependencies are OpenSSL, and build time dependencies are C++17 friendly
-compiler and of course the OpenSSL headers.
+Dependencies are OpenSSL and libconfig, and build time dependencies are C++17
+friendly compiler and of course the OpenSSL and libconfig headers.
 
 Once that is done, run it like:
 
 ```
-./bsserver -x s3cur3p4ss -p 12345 -d /my/backup/dir -k key.pem -c cert.pem
+./bsserver /etc/myconfig
 ```
+
+The config file can look like:
+
+```
+password = "s3cur3p4ss";
+port = 12345;
+dir = "/my/backup/dir";
+keyfile = "key.pem";
+cerfile = "cert.pem";
+max-connections = 50;
+user = "nobody";
+```
+
+If `user` is specified, the server expectes to be run as root, and will
+drop its privileges to that user. It will still be able to read any root
+owned cert/key files.
 
 The server requires an SSL certificate, however if that's too complicated
 for your setup, just generate a self-signed cert and key. That means that
