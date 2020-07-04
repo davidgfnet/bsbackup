@@ -22,7 +22,9 @@
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
-#include "args.hxx"
+#include <libconfig.h>
+
+#define RET_ERR(x) { std::cerr << x << std::endl; return 1; }
 
 // Make this global to simplify things
 std::string backup_dir, master_pass;
@@ -289,43 +291,22 @@ public:
 };
 
 int main(int argc, char **argv) {
-	args::ArgumentParser parser("bsserver receives backup requests from clients and archives them.",
-		"Example usage: ./bsserver -p 8080 -n 4");
-	args::HelpFlag help(parser, "help", "Display this help menu", {'h', "help"});
-	args::ValueFlag<int> flagport(parser, "port", "Server listen port", {'p'});
-	args::ValueFlag<int> flagmaxc(parser, "count", "Maximum simultaneous connections", {'n'});
-	args::ValueFlag<std::string> daemonuser(parser, "user", "User to drop privileges to when running as root", {'u'});
-	args::Group reqarguments(parser, "required arguments", args::Group::Validators::All, args::Options::Required);
-	args::ValueFlag<std::string> dirflag(reqarguments, "path", "Directory where to dump backups", {'d'});
-	args::ValueFlag<std::string> passflag(reqarguments, "pass", "Password to authenticate the clients with", {'x'});
-	args::ValueFlag<std::string> certflag(reqarguments, "cert", "Certificate chain file", {'c'});
-	args::ValueFlag<std::string> keyflag(reqarguments, "key", "Key file to use for the SSL server", {'k'});
-	try {
-		parser.ParseCLI(argc, argv);
-	}
-	catch (const args::Completion& e) {
-		std::cout << e.what();
-		return 0;
-	}
-	catch (const args::Help&) {
-		std::cout << parser;
-		return 0;
-	}
-	catch (const args::ParseError& e) {
-		std::cerr << e.what() << std::endl;
-		std::cerr << parser;
-		return 1;
-	}
-	catch (args::ValidationError e) {
-		std::cerr << e.what() << std::endl;
-		std::cerr << parser;
-		return 1;
-	}
+	config_t cfg;
+	config_init(&cfg);
+	if (!config_read_file(&cfg, argv[1]))
+		RET_ERR("Error reading config file");
 
-	int max_connections = flagmaxc ? args::get(flagmaxc) : 10;   // Some sane default
-	int port = flagport ? args::get(flagport) : 8080;            // Some default port
-	master_pass = args::get(passflag);
-	backup_dir = args::get(dirflag);
+	// Read config vars
+	int max_connections = 10, port = 8080;
+	const char *tmp_;
+	config_lookup_int(&cfg, "max-connections", (int*)&max_connections);
+	config_lookup_int(&cfg, "port", (int*)&port);
+	if (!config_lookup_string(&cfg, "password", &tmp_))
+		RET_ERR("'password' missing in config file");
+	master_pass = tmp_;
+	if (!config_lookup_string(&cfg, "dir", &tmp_))
+		RET_ERR("'dir' missing in config file");
+	backup_dir = tmp_;
 
 	// Setup SSL stuff, use defaults mostly
 	signal(SIGPIPE, SIG_IGN);
@@ -333,18 +314,22 @@ int main(int argc, char **argv) {
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
 
-	SSLFactory factory(args::get(keyflag), args::get(certflag));
+	const char *keyfile_, *certfile_;
+	if (!config_lookup_string(&cfg, "keyfile", &keyfile_) ||
+	    !config_lookup_string(&cfg, "certfile", &certfile_))
+	    RET_ERR("'keyfile' and 'certfile' are required to create SSL connections");
+
+	SSLFactory factory(keyfile_, certfile_);
 
 	std::list<std::unique_ptr<BackupHandler>> handlers;
 	int listendf = create_socket(port);
 
 	// Drop privileges here if needed
-	std::string puser = args::get(daemonuser);
-	if (!puser.empty()) {
-		std::cout << "Dropping privileges to user " << puser << std::endl;
-		struct passwd * pw = getpwnam(puser.c_str());
+	if (config_lookup_string(&cfg, "user", &tmp_)) {
+		std::cout << "Dropping privileges to user " << tmp_ << std::endl;
+		struct passwd * pw = getpwnam(tmp_);
 		if (!pw) {
-			std::cerr << "Could not find user in passwd file: " << puser << std::endl;
+			std::cerr << "Could not find user in passwd file: " << tmp_ << std::endl;
 			return 1;
 		}
 
