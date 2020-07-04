@@ -23,6 +23,7 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <libconfig.h>
+#include "configsrv.h"
 
 #define RET_ERR(x) { std::cerr << x << std::endl; return 1; }
 
@@ -261,6 +262,7 @@ int create_socket(int port) {
 class SSLFactory {
 private:
 	std::string keyfile, certfile;
+	ConfigServer reader;
 
 public:
 	SSLFactory(std::string keyfile, std::string certfile)
@@ -277,11 +279,32 @@ public:
 			return nullptr;
 		}
 
+		std::string cert = reader.readfile(certfile);
+		BIO *certin = BIO_new_mem_buf(cert.c_str(), cert.size());
+		X509 *x = PEM_read_bio_X509_AUX(certin, NULL, NULL, NULL);
+		if (!x) {
+			ERR_print_errors_fp(stdout);
+			return nullptr;
+		}
+		int ret1 = SSL_CTX_use_certificate(ctx, x);
+		SSL_CTX_clear_chain_certs(ctx);
+		X509 *ca = NULL;
+		while ((ca = PEM_read_bio_X509(certin, NULL, NULL, NULL)) != NULL)
+			SSL_CTX_add0_chain_cert(ctx, ca);
+
+		std::string pkey = reader.readfile(keyfile);
+		BIO *pkeyin = BIO_new_mem_buf(pkey.c_str(), pkey.size());
+		EVP_PKEY *evppkey = PEM_read_bio_PrivateKey(pkeyin, NULL, NULL, NULL);
+		int ret2 = SSL_CTX_use_PrivateKey(ctx, evppkey);
+
+		X509_free(x);
+		EVP_PKEY_free(evppkey);
+		BIO_free(pkeyin);
+		BIO_free(certin);
+
 		// Set the key and cert (note we use _chain_ to ensure clients are happy)
 		SSL_CTX_set_ecdh_auto(ctx, 1);
-		if (SSL_CTX_use_certificate_chain_file(ctx, certfile.c_str()) <= 0 ||
-			SSL_CTX_use_PrivateKey_file(ctx, keyfile.c_str(), SSL_FILETYPE_PEM) <= 0 ||
-			!SSL_CTX_check_private_key(ctx)) {
+		if (ret1 <= 0 || ret2 <= 0 || !SSL_CTX_check_private_key(ctx)) {
 			ERR_print_errors_fp(stdout);
 			return nullptr;
 		}
