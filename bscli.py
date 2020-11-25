@@ -47,7 +47,6 @@ parser.add_argument('--host', dest='host', required=True, help='Hostname (+port)
 parser.add_argument('--pass', dest='pwd', required=True, help='String password to authenticate with server')
 parser.add_argument('--name', dest='name', required=True, help='Name of the backup to issue')
 parser.add_argument('--file', dest='pfile', required=True, help='File to backup')
-parser.add_argument('--copies', dest='ncopy', required=True, type=int, help='Number of copies to keep')
 parser.add_argument('--nocert', dest='nocert', action="store_true", help='Ignore SSL cert errors (DISCOURAGED!)')
 args = parser.parse_args()
 
@@ -78,7 +77,6 @@ print("Connection established, authentication started")
 sock.write(npad(args.name.encode("utf-8")))
 sock.write(filehash)
 sock.write(struct.pack("!Q", filesize))
-sock.write(struct.pack("!Q", args.ncopy))
 
 # Now push the file!
 with open(args.pfile, 'rb') as f:

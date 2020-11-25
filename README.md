@@ -47,9 +47,28 @@ password = "s3cur3p4ss";
 port = 12345;
 dir = "/my/backup/dir";
 keyfile = "key.pem";
-cerfile = "cert.pem";
+certfile = "cert.pem";
 max-connections = 50;
 user = "nobody";
+
+backup-targets = (
+  {
+    name = "pictures_backup";
+    max-copies = 3;
+    rate-limit = {
+      period = 24;  // Max 1 backup every 24h
+      copies = 1;
+    };
+  },
+  {
+    name = "docs_backup";
+    max-copies = 10;
+    rate-limit = {
+      period = 720;  // Max 5 backups per month
+      copies = 5;
+    };
+  }
+);
 ```
 
 If `user` is specified, the server expectes to be run as root, and will

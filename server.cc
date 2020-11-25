@@ -8,6 +8,8 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -27,8 +29,17 @@
 
 #define RET_ERR(x) { std::cerr << x << std::endl; return 1; }
 
+
+struct t_target {
+	// Rotation copy count
+	unsigned maxcopies;
+	// Rate limiting
+	unsigned rl_period, rl_copies;
+};
+
 // Make this global to simplify things
 std::string backup_dir, master_pass;
+std::unordered_map<std::string, t_target> targets;
 
 uint64_t read64n(const uint8_t *b) {
 	uint64_t r = 0;
@@ -51,7 +62,7 @@ std::string gettodn() {
 	char fmtime[128];
 	auto tp = std::chrono::system_clock::now();
 	const std::time_t t = std::chrono::system_clock::to_time_t(tp);
-	std::strftime(fmtime, sizeof(fmtime), "%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+	std::strftime(fmtime, sizeof(fmtime), "%Y-%m-%d_%H-%M-%S", std::gmtime(&t));
 	return fmtime;
 }
 
@@ -80,6 +91,23 @@ std::vector<std::string> listdir(std::string sdir) {
 			if (dir->d_name[0] != '.')
 				ret.push_back((sdir + "/") + dir->d_name);
 		closedir(d);
+	}
+	return ret;
+}
+
+std::vector<uint64_t> listbackupts(std::string sdir) {
+	std::vector<uint64_t> ret;
+	for (auto fp : listdir(sdir)) {
+		auto p = fp.find_last_of('/');
+		std::string fn = p == std::string::npos ? fp : fp.substr(p+1);
+		if (fn.size() == 28 && fn[19] == '_') {
+			std::tm t;
+			std::istringstream ss(fn.substr(0, 19));
+			if (ss >> std::get_time(&t, "%Y-%m-%d_%H-%M-%S")) {
+				std::time_t time_stamp = timegm(&t);
+				ret.push_back(time_stamp);
+			}
+		}
 	}
 	return ret;
 }
@@ -126,7 +154,7 @@ public:
 
 	// Simple read() wrapper
 	int sslread(char *buffer, unsigned size) {
-		int offset = 0;
+		unsigned offset = 0;
 		while (offset < size) {
 			int r = SSL_read(ssl, &buffer[offset], size - offset);
 			if (!r)
@@ -159,16 +187,13 @@ public:
 
 		// Receive the header, with info about the backup
 		char bname[256], hash[32];
-		uint8_t maxcopies[8], filesize[8];
+		uint8_t filesize[8];
 		if (sizeof(bname) != sslread(bname, sizeof(bname)))
 			return {false, "Failed parsing request header"};
 		if (sizeof(hash) != sslread(hash, sizeof(hash)))
 			return {false, "Failed parsing request header"};
 		if (sizeof(filesize) != sslread((char*)filesize, sizeof(filesize)))
 			return {false, "Failed parsing request header"};
-		if (sizeof(maxcopies) != sslread((char*)maxcopies, sizeof(maxcopies)))
-			return {false, "Failed parsing request header"};
-		uint64_t mc = read64n(maxcopies);
 		uint64_t fs = read64n(filesize);
 		bname[sizeof(bname)-1] = 0;
 		std::string backupname(bname), backuphash(hash, sizeof(hash));
@@ -177,9 +202,25 @@ public:
 		std::replace(backupname.begin(), backupname.end(), '/', '_');
 		std::cout << "Got backup for " << backupname << " (" << fs << " bytes) with hash " << tohex(backuphash) << std::endl;
 
+		// Check the backup policy and enforce any rate limits
+		if (!targets.count(backupname))
+			return {false, "Backup is not defined in the server config"};
+		const t_target *t = &targets.at(backupname);
+
 		std::string subdirp = backup_dir + "/" + backupname;
 		std::string fullpath = subdirp + "/" + gettodn() + "_" + tohex(backuphash).substr(0, 8);
 		std::string tmpfullpath = fullpath + ".part";
+
+		if (t->rl_period && t->rl_copies) {
+			auto tsl = listbackupts(subdirp);
+			// Find the number of backups in the last rl_period hours
+			unsigned cnt = 0;
+			for (auto ts: tsl)
+				if ((signed)ts > time(0) - t->rl_period * 3600)
+					cnt++;
+			if (cnt >= t->rl_copies)
+				return {false, "Too many backups: " + std::to_string(cnt)};
+		}
 
 		// Create dir just in case
 		mkdir(subdirp.c_str(), 0750);
@@ -195,7 +236,7 @@ public:
 				auto rr = sslread(tmp, std::min((uint64_t)sizeof(tmp), fs - received));
 				if (rr <= 0)
 					break;
-				if (rr != fwrite(tmp, 1, rr, fo))
+				if (rr != (int)fwrite(tmp, 1, rr, fo))
 					break;
 				received += rr;
 				SHA256_Update(&sctx, tmp, rr);
@@ -217,7 +258,7 @@ public:
 		rename(tmpfullpath.c_str(), fullpath.c_str());
 
 		// Now cleanup the extra files we might have
-		backup_cleanup(subdirp, mc);
+		backup_cleanup(subdirp, t->maxcopies);
 
 		return {true, "Backup stored successfully"};
 	}
@@ -320,7 +361,7 @@ int main(int argc, char **argv) {
 		RET_ERR("Error reading config file");
 
 	// Read config vars
-	int max_connections = 10, port = 8080;
+	unsigned max_connections = 10, port = 8080;
 	const char *tmp_;
 	config_lookup_int(&cfg, "max-connections", (int*)&max_connections);
 	config_lookup_int(&cfg, "port", (int*)&port);
@@ -330,6 +371,41 @@ int main(int argc, char **argv) {
 	if (!config_lookup_string(&cfg, "dir", &tmp_))
 		RET_ERR("'dir' missing in config file");
 	backup_dir = tmp_;
+	
+	// Read backup targets from config
+	config_setting_t *targets_cfg = config_lookup(&cfg, "backup-targets");
+	if (!targets_cfg)
+		RET_ERR("Missing 'backup-targets' config array definition");
+	int tgtcnt = config_setting_length(targets_cfg);
+	if (!tgtcnt)
+		RET_ERR("backup-targets must have at least one entry");
+
+	for (int i = 0; i < tgtcnt; i++) {
+		config_setting_t *entry = config_setting_get_elem(targets_cfg, i);
+		config_setting_t *tgtname   = config_setting_get_member(entry, "name");
+		config_setting_t *tgtmaxc   = config_setting_get_member(entry, "max-copies");
+		config_setting_t *tgtrl     = config_setting_get_member(entry, "rate-limit");
+
+		if (!tgtname || !tgtmaxc)
+			RET_ERR("name and max-copies must be specified in each backup target entry");
+		
+		unsigned rl_period = 0, rl_copies = 0;
+		if (tgtrl) {
+			config_setting_t *mperiod = config_setting_get_member(tgtrl, "period");
+			config_setting_t *mcopies = config_setting_get_member(tgtrl, "copies");
+			if (mperiod && mcopies) {
+				rl_period = (unsigned)config_setting_get_int(mperiod);
+				rl_copies = (unsigned)config_setting_get_int(mcopies);
+			}
+		}
+
+		targets[config_setting_get_string(tgtname)] = {
+			.maxcopies = (unsigned)config_setting_get_int(tgtmaxc),
+			.rl_period = rl_period,
+			.rl_copies = rl_copies,
+		};
+	}
+	std::cerr << "Parsed config, found " << targets.size() << " backup targets" << std::endl;
 
 	// Setup SSL stuff, use defaults mostly
 	signal(SIGPIPE, SIG_IGN);
