@@ -407,20 +407,6 @@ int main(int argc, char **argv) {
 	}
 	std::cerr << "Parsed config, found " << targets.size() << " backup targets" << std::endl;
 
-	// Setup SSL stuff, use defaults mostly
-	signal(SIGPIPE, SIG_IGN);
-	SSL_library_init();
-	OpenSSL_add_all_algorithms();
-	SSL_load_error_strings();
-
-	const char *keyfile_, *certfile_;
-	if (!config_lookup_string(&cfg, "keyfile", &keyfile_) ||
-	    !config_lookup_string(&cfg, "certfile", &certfile_))
-	    RET_ERR("'keyfile' and 'certfile' are required to create SSL connections");
-
-	SSLFactory factory(keyfile_, certfile_);
-
-	std::list<std::unique_ptr<BackupHandler>> handlers;
 	int listendf = create_socket(port);
 
 	// Drop privileges here if needed
@@ -438,7 +424,21 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	// Setup SSL stuff, use defaults mostly
+	signal(SIGPIPE, SIG_IGN);
+	SSL_library_init();
+	OpenSSL_add_all_algorithms();
+	SSL_load_error_strings();
+
+	const char *keyfile_, *certfile_;
+	if (!config_lookup_string(&cfg, "keyfile", &keyfile_) ||
+	    !config_lookup_string(&cfg, "certfile", &certfile_))
+	    RET_ERR("'keyfile' and 'certfile' are required to create SSL connections");
+
+	SSLFactory factory(keyfile_, certfile_);
+
 	// Handles incoming connections.
+	std::list<std::unique_ptr<BackupHandler>> handlers;
 	while (1) {
 		struct sockaddr_in addr;
 		socklen_t len = sizeof(addr);
