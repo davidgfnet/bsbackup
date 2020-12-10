@@ -5,6 +5,7 @@
 #include <vector>
 #include <thread>
 #include <list>
+#include <unordered_map>
 #include <iostream>
 #include <chrono>
 #include <algorithm>
@@ -303,11 +304,11 @@ int create_socket(int port) {
 class SSLFactory {
 private:
 	std::string keyfile, certfile;
-	ConfigServer reader;
+	ConfigServer *reader;
 
 public:
-	SSLFactory(std::string keyfile, std::string certfile)
-		:keyfile(keyfile), certfile(certfile) {}
+	SSLFactory(ConfigServer *reader, std::string keyfile, std::string certfile)
+		: keyfile(keyfile), certfile(certfile), reader(reader) {}
 
 	SSL_CTX *create() {
 		auto *ctx = SSL_CTX_new(TLS_method());
@@ -320,7 +321,7 @@ public:
 			return nullptr;
 		}
 
-		std::string cert = reader.readfile(certfile);
+		std::string cert = reader->readfile(certfile);
 		BIO *certin = BIO_new_mem_buf(cert.c_str(), cert.size());
 		X509 *x = PEM_read_bio_X509_AUX(certin, NULL, NULL, NULL);
 		if (!x) {
@@ -333,7 +334,7 @@ public:
 		while ((ca = PEM_read_bio_X509(certin, NULL, NULL, NULL)) != NULL)
 			SSL_CTX_add0_chain_cert(ctx, ca);
 
-		std::string pkey = reader.readfile(keyfile);
+		std::string pkey = reader->readfile(keyfile);
 		BIO *pkeyin = BIO_new_mem_buf(pkey.c_str(), pkey.size());
 		EVP_PKEY *evppkey = PEM_read_bio_PrivateKey(pkeyin, NULL, NULL, NULL);
 		int ret2 = SSL_CTX_use_PrivateKey(ctx, evppkey);
@@ -408,6 +409,7 @@ int main(int argc, char **argv) {
 	std::cerr << "Parsed config, found " << targets.size() << " backup targets" << std::endl;
 
 	int listendf = create_socket(port);
+	ConfigServer cfgreader;
 
 	// Drop privileges here if needed
 	if (config_lookup_string(&cfg, "user", &tmp_)) {
@@ -435,7 +437,7 @@ int main(int argc, char **argv) {
 	    !config_lookup_string(&cfg, "certfile", &certfile_))
 	    RET_ERR("'keyfile' and 'certfile' are required to create SSL connections");
 
-	SSLFactory factory(keyfile_, certfile_);
+	SSLFactory factory(&cfgreader, keyfile_, certfile_);
 
 	// Handles incoming connections.
 	std::list<std::unique_ptr<BackupHandler>> handlers;
