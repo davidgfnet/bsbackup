@@ -322,6 +322,10 @@ public:
 		}
 
 		std::string cert = reader->readfile(certfile);
+		if (!cert.size()) {
+			std::cout << "Could not read certificate file!" << std::endl;
+			return nullptr;
+		}
 		BIO *certin = BIO_new_mem_buf(cert.c_str(), cert.size());
 		X509 *x = PEM_read_bio_X509_AUX(certin, NULL, NULL, NULL);
 		if (!x) {
