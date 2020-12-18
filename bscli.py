@@ -69,7 +69,7 @@ sock.connect((hostname, int(port)))
 # Authenticate
 challenge = sock.read(32)
 assert len(challenge) == 32
-response = hashlib.sha256(challenge + hashlib.sha256(args.pwd.encode('utf-8')).digest() + bytes(list(range(64)))).digest()
+response = hashlib.sha256(challenge + hashlib.sha256(args.pwd.encode('utf-8')).digest() + bytearray(list(range(64)))).digest()
 sock.write(response)
 print("Connection established, authentication started")
 
