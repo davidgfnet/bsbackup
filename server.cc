@@ -122,6 +122,27 @@ void backup_cleanup(std::string dir, unsigned max_copies) {
 	}
 }
 
+std::string statuspage() {
+	std::string ret = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n";
+	ret += "<body><table border='1'>";
+	for (auto t : targets) {
+		std::string subdirp = backup_dir + "/" + t.first + "/";
+		auto dirs = listdir(subdirp);
+
+		ret += "<tr><td>" + t.first + "</td><td>" +
+		       "Max copies: " + std::to_string(t.second.maxcopies) + "<br/>" +
+		       "Limits: " + std::to_string(t.second.rl_copies) + "/" +
+		       std::to_string(t.second.rl_period) + "<br/></td><td>";
+
+		for (auto s : dirs)
+			ret += s + "<br/>";
+
+		ret += "</td></tr>";
+	}
+	ret += "</table></body>";
+	return ret;
+}
+
 class BackupHandler {
 public:
 	BackupHandler(int clientfd, SSL *ssl, SSL_CTX *ctx)
@@ -170,6 +191,25 @@ public:
 	std::pair<bool, std::string> work() {
 		if (SSL_accept(ssl) <= 0)
 			return {false, "Failed SSL connection handshake"};
+
+		// Wait for the hello message
+		char header[4];
+		if (sizeof(header) != sslread((char*)header, sizeof(header)))
+			return {false, "Could not read hello header"};
+
+		if (!memcmp(header, "GET ", sizeof(header))) {
+			char path[10];
+			if (sizeof(path) != sslread((char*)path, sizeof(path)))
+				return {false, "Could not read HTTP headers"};
+			if (memcmp(path, "/admindash", sizeof(path)))
+				return {false, "Could not read HTTP headers"};
+
+			std::string resp = statuspage();
+			SSL_write(ssl, resp.c_str(), resp.size());
+			return {true, "Status page served"};
+		}
+		else if (memcmp(header, "HIBS", sizeof(header)))
+			return {false, "Invalid hello message"};
 
 		// Send a random challenge (32 bytes)
 		uint8_t cha[32];
@@ -280,12 +320,12 @@ private:
 };
 
 int create_socket(int port) {
-	struct sockaddr_in addr;
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(port);
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	struct sockaddr_in6 addr;
+	addr.sin6_family = AF_INET6;
+	addr.sin6_port = htons(port);
+	addr.sin6_addr = in6addr_any;
 
-	int s = socket(AF_INET, SOCK_STREAM, 0);
+	int s = socket(AF_INET6, SOCK_STREAM, 0);
 	if (s < 0) {
 		perror("Unable to create socket");
 		exit(1);
@@ -446,12 +486,20 @@ int main(int argc, char **argv) {
 	// Handles incoming connections.
 	std::list<std::unique_ptr<BackupHandler>> handlers;
 	while (1) {
-		struct sockaddr_in addr;
+		struct sockaddr_storage addr;
 		socklen_t len = sizeof(addr);
 		int clientfd = accept(listendf, (struct sockaddr*)&addr, &len);
 		if (clientfd >= 0) {
-			char ipstr[INET_ADDRSTRLEN] = {0};
-			inet_ntop(AF_INET, &addr, ipstr, INET_ADDRSTRLEN);
+			char ipstr[INET6_ADDRSTRLEN] = {0};
+			if (addr.ss_family == AF_INET6)
+				inet_ntop(AF_INET6, &((struct sockaddr_in6*)&addr)->sin6_addr, ipstr, INET6_ADDRSTRLEN);
+			else if (addr.ss_family == AF_INET)
+				inet_ntop(AF_INET, &((struct sockaddr_in*)&addr)->sin_addr, ipstr, INET_ADDRSTRLEN);
+			else {
+				std::cout << "Invalid source address" << std::endl;
+				close(clientfd);
+				continue;
+			}
 
 			std::cout << "Got connection from " << ipstr << std::endl;
 			// Set read/write timeout to something useful

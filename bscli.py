@@ -67,6 +67,7 @@ sock = ctx.wrap_socket(sock, server_hostname=hostname)
 sock.connect((hostname, int(port)))
 
 # Authenticate
+sock.write(b"HIBS")
 challenge = sock.read(32)
 assert len(challenge) == 32
 response = hashlib.sha256(challenge + hashlib.sha256(args.pwd.encode('utf-8')).digest() + bytearray(list(range(64)))).digest()
