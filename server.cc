@@ -122,9 +122,29 @@ void backup_cleanup(std::string dir, unsigned max_copies) {
 	}
 }
 
+static uint64_t filesz(const std::string &fname) {
+	struct stat st;
+	if (stat(fname.c_str(), &st) < 0)
+		return 0;
+	return st.st_size;
+}
+
+static std::string humansize(uint64_t sz) {
+	if (sz < 1024)
+		return std::to_string(sz) + "B";
+	unsigned p = 0, res;
+	const char *pref = " KMGTPE";
+	do {
+		p++;
+		res = sz & 1023;
+		sz >>= 10;
+	} while (sz >= 1024);
+	return std::to_string(sz) + "." + std::to_string(res/103) + pref[p] + "iB";
+}
+
 std::string statuspage() {
 	std::string ret = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n";
-	ret += "<body><table border='1'>";
+	ret += "<html><body><table border='1'>";
 	for (auto t : targets) {
 		std::string subdirp = backup_dir + "/" + t.first + "/";
 		auto dirs = listdir(subdirp);
@@ -132,14 +152,14 @@ std::string statuspage() {
 		ret += "<tr><td>" + t.first + "</td><td>" +
 		       "Max copies: " + std::to_string(t.second.maxcopies) + "<br/>" +
 		       "Limits: " + std::to_string(t.second.rl_copies) + "/" +
-		       std::to_string(t.second.rl_period) + "<br/></td><td>";
+		       std::to_string(t.second.rl_period) + "<br/></td><td>\n";
 
 		for (auto s : dirs)
-			ret += s + "<br/>";
+			ret += s + " (" + humansize(filesz(s)) + ")<br/>\n";
 
 		ret += "</td></tr>";
 	}
-	ret += "</table></body>";
+	ret += "</table></body></html>";
 	return ret;
 }
 
