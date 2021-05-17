@@ -93,6 +93,7 @@ std::vector<std::string> listdir(std::string sdir) {
 				ret.push_back((sdir + "/") + dir->d_name);
 		closedir(d);
 	}
+	std::sort(ret.begin(), ret.end(), std::greater<std::string>());   // Sort from most recent to oldest
 	return ret;
 }
 
@@ -115,7 +116,6 @@ std::vector<uint64_t> listbackupts(std::string sdir) {
 
 void backup_cleanup(std::string dir, unsigned max_copies) {
 	auto files = listdir(dir);
-	std::sort(files.begin(), files.end(), std::greater<std::string>());   // Sort from most recent to oldest
 	for (unsigned i = max_copies; i < files.size(); i++) {
 		std::cout << "Deleting old backup " << files[i] << std::endl;
 		unlink(files[i].c_str());
