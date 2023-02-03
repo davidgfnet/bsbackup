@@ -58,11 +58,10 @@ hostname, port = args.host.split(":")
 
 print("Connecting to remote server")
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
-if not args.nocert:
-	ctx.verify_mode = ssl.CERT_REQUIRED
-	ctx.check_hostname = True
-	ctx.load_default_certs()
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.check_hostname = not args.nocert
+ctx.verify_mode = ssl.CERT_NONE if args.nocert else ssl.CERT_REQUIRED
+ctx.load_default_certs()
 sock = ctx.wrap_socket(sock, server_hostname=hostname)
 sock.connect((hostname, int(port)))
 
