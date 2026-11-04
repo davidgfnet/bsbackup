@@ -4,6 +4,7 @@
 
 #include <vector>
 #include <thread>
+#include <atomic>
 #include <list>
 #include <unordered_map>
 #include <iostream>
@@ -190,7 +191,7 @@ class BackupHandler {
 public:
 	BackupHandler(int clientfd, SSL *ssl, SSL_CTX *ctx)
 		: clientfd(clientfd), ssl(ssl), ctx(ctx),
-		  th(&BackupHandler::run, this), thread_dead(false) {}
+		  th(&BackupHandler::run, this) {}
 	BackupHandler(const BackupHandler &h) = delete;
 
 	~BackupHandler() {
@@ -358,8 +359,8 @@ private:
 	int clientfd;
 	SSL *ssl;
 	SSL_CTX *ctx;
+	std::atomic<bool> thread_dead{false};
 	std::thread th;
-	bool thread_dead;
 };
 
 int create_socket(int port) {
