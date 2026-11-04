@@ -4,6 +4,7 @@
 
 #include <vector>
 #include <thread>
+#include <memory>
 #include <atomic>
 #include <mutex>
 #include <list>
@@ -28,6 +29,7 @@
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <libconfig.h>
 #include "configsrv.h"
 
@@ -321,8 +323,9 @@ public:
 		mkdir(subdirp.c_str(), 0750);
 
 		// Now proceed to receive bytes from the client.
-		SHA256_CTX sctx;
-		SHA256_Init(&sctx);
+		std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> sctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+		if (!sctx || !EVP_DigestInit_ex(sctx.get(), EVP_sha256(), NULL))
+			return {false, "Could not initialize hashing"};
 		FILE *fo = fopen(tmpfullpath.c_str(), "wb");
 		uint64_t received = 0;
 		if (fo) {
@@ -334,14 +337,14 @@ public:
 				if (rr != (int)fwrite(tmp, 1, rr, fo))
 					break;
 				received += rr;
-				SHA256_Update(&sctx, tmp, rr);
+				EVP_DigestUpdate(sctx.get(), tmp, rr);
 			}
 			fclose(fo);
 		}
 
 		// Check hash of the file we just dropped
 		uint8_t fhash[32];
-		SHA256_Final(&fhash[0], &sctx);
+		EVP_DigestFinal_ex(sctx.get(), fhash, NULL);
 
 		if (received != fs || memcmp(fhash, hash, 32)) {
 			// Cleanup temp files!
