@@ -5,6 +5,7 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <mutex>
 #include <list>
 #include <unordered_map>
 #include <iostream>
@@ -36,10 +37,15 @@
 
 
 struct t_target {
+	t_target(unsigned maxcopies, unsigned rl_period, unsigned rl_copies)
+		: maxcopies(maxcopies), rl_period(rl_period), rl_copies(rl_copies) {}
+
 	// Rotation copy count
 	unsigned maxcopies;
 	// Rate limiting
 	unsigned rl_period, rl_copies;
+	// Held for the whole upload, so only one runs per target at a time
+	mutable std::mutex lock;
 };
 
 // Make this global to simplify things
@@ -169,7 +175,7 @@ static std::string humansize(uint64_t sz) {
 std::string statuspage() {
 	std::string ret = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n";
 	ret += "<html><body><table border='1'>";
-	for (auto t : targets) {
+	for (const auto &t : targets) {
 		std::string subdirp = backup_dir + "/" + t.first + "/";
 		auto dirs = listdir(subdirp);
 
@@ -291,6 +297,10 @@ public:
 		if (!targets.count(backupname))
 			return {false, "Backup is not defined in the server config"};
 		const t_target *t = &targets.at(backupname);
+
+		std::unique_lock<std::mutex> lk(t->lock, std::try_to_lock);
+		if (!lk.owns_lock())
+			return {false, "Another backup for this target is in progress"};
 
 		std::string subdirp = backup_dir + "/" + backupname;
 		std::string fullpath = subdirp + "/" + gettodn() + "_" + tohex(backuphash).substr(0, 8);
@@ -486,11 +496,12 @@ int main(int argc, char **argv) {
 			}
 		}
 
-		targets[config_setting_get_string(tgtname)] = {
-			.maxcopies = (unsigned)config_setting_get_int(tgtmaxc),
-			.rl_period = rl_period,
-			.rl_copies = rl_copies,
-		};
+		const char *name = config_setting_get_string(tgtname);
+		if (!name)
+			RET_ERR("Backup target name must be a string");
+		if (!targets.try_emplace(name, (unsigned)config_setting_get_int(tgtmaxc),
+		                         rl_period, rl_copies).second)
+			RET_ERR("Duplicate backup target: " << name);
 	}
 	std::cerr << "Parsed config, found " << targets.size() << " backup targets" << std::endl;
 
