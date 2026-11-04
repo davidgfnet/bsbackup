@@ -31,6 +31,8 @@
 
 #define RET_ERR(x) { std::cerr << x << std::endl; return 1; }
 
+#define STALE_PART_SECS (24*3600)
+
 
 struct t_target {
 	// Rotation copy count
@@ -115,8 +117,28 @@ std::vector<uint64_t> listbackupts(std::string sdir) {
 	return ret;
 }
 
+static bool ends_with(const std::string &s, const std::string &suffix) {
+	return s.size() >= suffix.size() && !s.compare(s.size() - suffix.size(), suffix.size(), suffix);
+}
+
+static time_t file_mtime(const std::string &fname) {
+	struct stat st;
+  if (stat(fname.c_str(), &st))
+    return time(0);
+	return st.st_mtime;
+}
+
 void backup_cleanup(std::string dir, unsigned max_copies) {
-	auto files = listdir(dir);
+	std::vector<std::string> files;
+	for (auto &f : listdir(dir)) {
+		if (!ends_with(f, ".part"))
+			files.push_back(f);
+		else if (file_mtime(f) + STALE_PART_SECS < time(0)) {
+			std::cout << "Deleting stale partial upload " << f << std::endl;
+			unlink(f.c_str());
+		}
+	}
+
 	for (unsigned i = max_copies; i < files.size(); i++) {
 		std::cout << "Deleting old backup " << files[i] << std::endl;
 		unlink(files[i].c_str());
