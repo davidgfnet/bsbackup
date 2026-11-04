@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <grp.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -484,7 +485,7 @@ int main(int argc, char **argv) {
 			return 1;
 		}
 
-		if (setgid(pw->pw_gid) || setuid(pw->pw_uid)) {
+		if (setgroups(0, NULL) || setgid(pw->pw_gid) || setuid(pw->pw_uid)) {
 			std::cerr << "setuid/setgid failed!" << std::endl;
 			return 1;
 		}
