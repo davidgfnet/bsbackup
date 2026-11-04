@@ -364,12 +364,10 @@ int create_socket(int port) {
 
 class SSLFactory {
 private:
-	std::string keyfile, certfile;
 	ConfigServer *reader;
 
 public:
-	SSLFactory(ConfigServer *reader, std::string keyfile, std::string certfile)
-		: keyfile(keyfile), certfile(certfile), reader(reader) {}
+	SSLFactory(ConfigServer *reader) : reader(reader) {}
 
 	SSL_CTX *create() {
 		auto *ctx = SSL_CTX_new(TLS_method());
@@ -382,7 +380,7 @@ public:
 			return nullptr;
 		}
 
-		std::string cert = reader->readfile(certfile);
+		std::string cert = reader->readfile("cert");
 		if (!cert.size()) {
 			std::cout << "Could not read certificate file!" << std::endl;
 			return nullptr;
@@ -399,7 +397,7 @@ public:
 		while ((ca = PEM_read_bio_X509(certin, NULL, NULL, NULL)) != NULL)
 			SSL_CTX_add0_chain_cert(ctx, ca);
 
-		std::string pkey = reader->readfile(keyfile);
+		std::string pkey = reader->readfile("key");
 		BIO *pkeyin = BIO_new_mem_buf(pkey.c_str(), pkey.size());
 		EVP_PKEY *evppkey = PEM_read_bio_PrivateKey(pkeyin, NULL, NULL, NULL);
 		int ret2 = SSL_CTX_use_PrivateKey(ctx, evppkey);
@@ -473,8 +471,14 @@ int main(int argc, char **argv) {
 	}
 	std::cerr << "Parsed config, found " << targets.size() << " backup targets" << std::endl;
 
+	const char *keyfile_, *certfile_;
+	if (!config_lookup_string(&cfg, "keyfile", &keyfile_) ||
+	    !config_lookup_string(&cfg, "certfile", &certfile_))
+	    RET_ERR("'keyfile' and 'certfile' are required to create SSL connections");
+
 	int listendf = create_socket(port);
-	ConfigServer cfgreader;
+	// Root helper, can only read the files registered here
+	ConfigServer cfgreader({{"key", keyfile_}, {"cert", certfile_}});
 
 	// Drop privileges here if needed
 	if (config_lookup_string(&cfg, "user", &tmp_)) {
@@ -497,12 +501,7 @@ int main(int argc, char **argv) {
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
 
-	const char *keyfile_, *certfile_;
-	if (!config_lookup_string(&cfg, "keyfile", &keyfile_) ||
-	    !config_lookup_string(&cfg, "certfile", &certfile_))
-	    RET_ERR("'keyfile' and 'certfile' are required to create SSL connections");
-
-	SSLFactory factory(&cfgreader, keyfile_, certfile_);
+	SSLFactory factory(&cfgreader);
 
 	// Handles incoming connections.
 	std::list<std::unique_ptr<BackupHandler>> handlers;
